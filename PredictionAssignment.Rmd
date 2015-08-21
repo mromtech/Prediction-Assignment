@@ -1,0 +1,127 @@
+---
+title: 'Practical Machine Learning: Course Project Writeup'
+output: html_document
+---
+  
+### Question
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har.  
+  
+### Input Data  
+First load both the Training and Testing data provided. The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+```{r}
+library(RCurl)
+TrainingData <- read.csv("C:/Users/Mitch/Documents/DataScience/pml-training.csv")
+TestingData <- read.csv("C:/Users/Mitch/Documents/DataScience/pml-testing.csv")
+
+#Dimension of training data
+dim(TrainingData)
+```
+  
+### Features
+**Data Preprocessing**  
+We perform several data preprocessing steps necessary to improve our analysis. The processes below aims to remove predictors they would not contribute well to the prediction.  
+  
+**Remove highly correlated predictors (in our case the correlation value is selected to be >90%)**
+```{r}
+library(caret)
+#Only calculate correlation for predictors that are numeric
+correlation <- cor(na.omit(TrainingData[sapply(TrainingData, is.numeric)]))
+
+remove = findCorrelation(correlation, cutoff = .90, verbose = FALSE)
+TrainingData = TrainingData[,-remove]
+
+#Dimension of training data adter removing correlated predictors
+dim(TrainingData)
+```
+  
+**Remove predictors with too many NA values.**
+```{r}
+containsNA <- sapply(TrainingData, function (x) any(is.na(x) | x == ""))
+#Also include variables like "kurtosis_roll_belt, skewness_roll_belt, skewness_yaw_arm etc" that contains mostly empty values
+isPredictor <- !containsNA & grepl("belt|forearm|[^(fore)]arm|dumbbell", names(containsNA))
+predCandidates <- names(containsNA)[isPredictor]
+#Include the "classe" predictor variable
+varToInclude <- c("classe", predCandidates)
+TrainingData <- TrainingData[, varToInclude]
+
+#Dimension of training data
+dim(TrainingData)
+```
+  
+**Remove predictors that have extremely low variance using the nearZeroVar() function.**
+```{r}
+zeroVar <- nearZeroVar(TrainingData[sapply(TrainingData, is.numeric)], saveMetrics = TRUE)
+TrainingData <- TrainingData[,zeroVar[, 'nzv']==0]
+
+#Dimension of training data
+dim(TrainingData)
+```
+  
+**Split data to 60% training and 40% testing for cross validation.**
+```{r}
+inTrain <- createDataPartition(y=TrainingData$classe, p=0.6, list=FALSE)
+TrainingSplit <- TrainingData[inTrain,]
+TestingSplit <- TrainingData[-inTrain,]
+
+#Dimension of training and testing data after partitioning
+dim(TrainingSplit)
+dim(TestingSplit)
+```
+  
+### Algorithm
+Here we make use of 2 machine learning algorithms to build our models. The first is rpart: Recursive Partitioning and Regression Trees, and the second is the random forest algorithm. The out of sample error will be estimated using the 40% training sample. **We expect a small out of sample error, estimated to be less than 3%.**  
+
+**rpart: Recursive Partitioning and Regression Trees**
+```{r}
+library(rpart)
+ModelRPart <- train(classe ~ .,method="rpart",data=TrainingSplit)
+ModelRPart$finalModel
+```
+  
+**Random forest**
+```{r}
+library(randomForest)
+set.seed(52368)
+
+ModelRandomForest <- randomForest(classe~.,data=TrainingSplit,ntree=200, importance=TRUE)
+```
+  
+**Out-of Sample Accuracy**  
+Our Random Forest model shows OOB estimate of error rate: 1.43% for the training data. **The predicted out-of sample accuracy on the test data has an estimated error rate is less than 1%.**
+  
+### Evaluation (Cross-Validation)  
+**rPart**
+We calculate the error rate of our rpart predictor.
+```{r}
+tree.pred <- predict(ModelRPart,TestingSplit)
+predMatrix <- with(TestingSplit,table(tree.pred,classe))
+sum(diag(predMatrix))/sum(as.vector(predMatrix)) # error rate
+```
+We obtain a very poor model with an estimated error rate of 0.49.
+  
+**Random forest**
+We calculate the error rate of our random forest predictor.
+```{r}
+rf.pred <- predict(ModelRandomForest,TestingSplit,type="class")
+predictor <- with(TestingSplit,table(rf.pred,classe))
+sum(diag(predictor))/sum(as.vector(predictor)) # error rate
+```
+We obtain a very accurate estimated error rate of 0.9866, which will be selected to be our final model.  
+
+### Test Data Submission
+Make use of the random forest algorithm that was built earlier to predict the results of TestingData. Outputting the results using the provided pml_write_files function.
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predict(ModelRandomForest, TestingData))
+
+```
